@@ -26,6 +26,43 @@ DIM_COLOR = "#333344"          # Darkened color for non-relevant elements
 EDGE_DIM_COLOR = "#333344"     # Darkened color for non-relevant edges
 
 
+# Column ordering for node types (left → right)
+COLUMN_ORDER = ["Sensor", "Intermediary", "Endpoint"]
+
+
+def _compute_column_positions(graph: nx.DiGraph) -> dict:
+    """
+    Compute explicit (x, y) positions for every node so that nodes are
+    laid out in vertical columns by type:
+        Column 0 → Sensors
+        Column 1 → Intermediaries (gateways)
+        Column 2 → Endpoints
+
+    Within each column nodes are evenly spaced along the y-axis.
+
+    Returns a dict:  { node_name: (x, y), ... }
+    """
+    # Group nodes by type
+    groups = {col: [] for col in COLUMN_ORDER}
+    for node_name, attrs in graph.nodes(data=True):
+        ntype = attrs.get("node_type", "Sensor")
+        if ntype in groups:
+            groups[ntype].append(node_name)
+        else:
+            # Fallback: put unknown types in the last column
+            groups[COLUMN_ORDER[-1]].append(node_name)
+
+    positions = {}
+    for col_idx, col_type in enumerate(COLUMN_ORDER):
+        members = groups[col_type]
+        x = col_idx * 300  # 300 px per column
+        for row_idx, name in enumerate(sorted(members)):
+            y = row_idx * 120  # 120 px vertical spacing
+            positions[name] = (x, y)
+
+    return positions
+
+
 def _get_endpoint_nodes(graph: nx.DiGraph) -> set:
     """
     Return the set of node names whose type is 'Endpoint'.
@@ -196,7 +233,13 @@ def generate_pyvis_html(
     upstream_map = _build_upstream_map(graph)
 
     # ------------------------------------------------------------------
-    # 2. Create PyVis network — physics OFF so nodes are independent.
+    # 2. Compute column-based positions so Sensors, Gateways, and
+    #    Endpoints line up in separate vertical columns.
+    # ------------------------------------------------------------------
+    positions = _compute_column_positions(graph)
+
+    # ------------------------------------------------------------------
+    # 3. Create PyVis network — physics OFF so nodes stay in place.
     # ------------------------------------------------------------------
     net = Network(
         height="600px",
@@ -223,7 +266,7 @@ def generate_pyvis_html(
     """)
 
     # ------------------------------------------------------------------
-    # 3. Collect per-node metadata for the hover JavaScript.
+    # 4. Collect per-node metadata for the hover JavaScript.
     # ------------------------------------------------------------------
     node_type_map = {}
     node_color_map = {}
@@ -234,6 +277,8 @@ def generate_pyvis_html(
         node_type_map[node_name] = node_type
         node_color_map[node_name] = color
 
+        x, y = positions.get(node_name, (0, 0))
+
         net.add_node(
             node_name,
             label=node_name,
@@ -243,6 +288,8 @@ def generate_pyvis_html(
             font={"color": "white", "size": 14},
             borderWidth=2,
             title=f"Type: {node_type}",
+            x=x,
+            y=y,
         )
 
     # ------------------------------------------------------------------
@@ -274,7 +321,7 @@ def generate_pyvis_html(
             color={"color": edge_color, "highlight": HIGHLIGHT_COLOR},
             width=edge_width,
             title=f"Status: {status}",
-            smooth={"type": "curvedCW", "roundness": 0.15},
+            smooth=False,
         )
 
     # ------------------------------------------------------------------

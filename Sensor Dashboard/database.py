@@ -67,6 +67,22 @@ def initialize_database():
             )
         """)
 
+        # Create connection_tests table for manual status tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS connection_tests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sensor_name TEXT NOT NULL,
+                gateway_name TEXT NOT NULL,
+                endpoint_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Untested'
+                    CHECK(status IN ('FMC', 'PMC', 'NMC', 'Untested')),
+                test_date TEXT NOT NULL,
+                FOREIGN KEY (sensor_name) REFERENCES nodes(name),
+                FOREIGN KEY (gateway_name) REFERENCES nodes(name),
+                FOREIGN KEY (endpoint_name) REFERENCES nodes(name)
+            )
+        """)
+
         conn.commit()
         conn.close()
     except sqlite3.Error as e:
@@ -410,3 +426,70 @@ def get_health_summary():
         }
     except sqlite3.Error as e:
         raise RuntimeError(f"Failed to calculate health summary: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Connection Test Operations
+# ---------------------------------------------------------------------------
+
+def record_connection_test(
+    sensor_name: str,
+    gateway_name: str,
+    endpoint_name: str,
+    status: str,
+    test_date: str,
+):
+    """
+    Record a manual connection test result for a sensor → gateway → endpoint
+    path.
+
+    Args:
+        sensor_name: Name of the sensor node.
+        gateway_name: Name of the gateway (intermediary) node.
+        endpoint_name: Name of the endpoint node.
+        status: Connection status ('FMC', 'PMC', 'NMC', 'Untested').
+        test_date: Date of the test (ISO format string, e.g. '2025-01-15').
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO connection_tests
+                (sensor_name, gateway_name, endpoint_name, status, test_date)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (sensor_name, gateway_name, endpoint_name, status, test_date),
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Failed to record connection test: {e}")
+
+
+def get_connection_tests(limit: int = 20):
+    """
+    Get the most recent connection test results.
+
+    Args:
+        limit: Maximum number of results to return.
+
+    Returns:
+        List of connection test dictionaries, most recent first.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM connection_tests
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        results = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return results
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Failed to fetch connection tests: {e}")

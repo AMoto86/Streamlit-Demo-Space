@@ -3,6 +3,7 @@ Network Connectivity & Pathway Management Dashboard
 Main Streamlit entry point.
 """
 
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 from database import (
@@ -11,16 +12,13 @@ from database import (
     get_all_nodes,
     get_all_edges,
     get_health_summary,
-    get_recent_tests,
+    get_connection_tests,
     add_node,
     add_edge,
-    update_edges_status,
-    record_test_result,
+    record_connection_test,
 )
 from graph_engine import (
     build_networkx_graph,
-    find_path,
-    get_path_edges,
     generate_pyvis_html,
 )
 
@@ -139,65 +137,55 @@ if "edge_msg" in st.session_state:
         st.sidebar.error(msg_text)
     del st.session_state.edge_msg
 
-# ---- Run Test Form ----
-with st.sidebar.form("run_test_form", clear_on_submit=True):
-    st.subheader("🧪 Run Connection Test")
+# ---- Connection Status Form ----
+with st.sidebar.form("connection_status_form", clear_on_submit=True):
+    st.subheader("📡 Connection Status")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        test_src = st.selectbox("Source Node", node_names, key="src2")
-    with col2:
-        test_tgt = st.selectbox("Target Node", node_names, key="tgt2")
+    # Build filtered lists by node type
+    sensors = [n["name"] for n in all_nodes if n["type"] == "Sensor"]
+    gateways = [n["name"] for n in all_nodes if n["type"] == "Intermediary"]
+    endpoints = [n["name"] for n in all_nodes if n["type"] == "Endpoint"]
 
-    submit_test = st.form_submit_button("Test Connection")
+    conn_sensor = st.selectbox("Sensor", sensors, key="conn_sensor")
+    conn_gateway = st.selectbox("Gateway", gateways, key="conn_gateway")
+    conn_endpoint = st.selectbox("Endpoint", endpoints, key="conn_endpoint")
 
-    if submit_test:
-        if test_src == test_tgt:
-            st.session_state.test_msg = (
-                "error",
-                f"Source and target must be different nodes.",
-            )
-        else:
-            # Build the current graph state
-            nodes = get_all_nodes()
-            edges = get_all_edges()
-            graph = build_networkx_graph(nodes, edges)
+    conn_status = st.selectbox(
+        "Status",
+        options=["FMC", "PMC", "NMC", "Untested"],
+        key="conn_status",
+    )
 
-            # Find shortest path in the graph
-            path = find_path(graph, test_src, test_tgt)
+    conn_date = st.date_input(
+        "Test Date",
+        value=datetime.now().date(),
+        key="conn_date",
+    )
 
-            if path:
-                # Path exists — mark all edges along the path as Active
-                path_edge_pairs = get_path_edges(graph, path)
-                update_edges_status(path_edge_pairs, "Active")
+    submit_conn = st.form_submit_button("Save Status")
 
-                path_str = " → ".join(path)
-                message = (
-                    f"✅ Connection verified!\n\n"
-                    f"**Path:** `{path_str}`\n\n"
-                    f"Edges along the path are now marked **Active**."
-                )
-                st.session_state.test_msg = ("success", message)
-                record_test_result(
-                    test_src, test_tgt, f"Success: {path_str}"
-                )
-            else:
-                # No path found
-                message = (
-                    f"❌ No connection found between "
-                    f"'{test_src}' and '{test_tgt}'."
-                )
-                st.session_state.test_msg = ("error", message)
-                record_test_result(test_src, test_tgt, "No connection found")
+    if submit_conn:
+        record_connection_test(
+            sensor_name=conn_sensor,
+            gateway_name=conn_gateway,
+            endpoint_name=conn_endpoint,
+            status=conn_status,
+            test_date=str(conn_date),
+        )
+        st.session_state.conn_msg = (
+            "success",
+            f"Status **{conn_status}** saved for "
+            f"{conn_sensor} → {conn_gateway} → {conn_endpoint}.",
+        )
 
-# Display test feedback outside the form so it persists
-if "test_msg" in st.session_state:
-    msg_type, msg_text = st.session_state.test_msg
+# Display connection status feedback outside the form so it persists
+if "conn_msg" in st.session_state:
+    msg_type, msg_text = st.session_state.conn_msg
     if msg_type == "success":
         st.sidebar.success(msg_text)
     else:
         st.sidebar.error(msg_text)
-    del st.session_state.test_msg
+    del st.session_state.conn_msg
 
 
 # ---------------------------------------------------------------------------
@@ -239,22 +227,52 @@ st.markdown("---")
 
 
 # ---------------------------------------------------------------------------
-# Main Area — Recent Test Results
+# Main Area — Connection Status Table
 # ---------------------------------------------------------------------------
 
-st.subheader("📋 Recent Test Results")
+st.subheader("📡 Connection Status")
 
-recent = get_recent_tests(limit=10)
+conn_tests = get_connection_tests(limit=50)
 
-if recent:
-    for test in recent:
-        icon = "✅" if "Success" in test["result"] else "❌"
-        st.markdown(
-            f"{icon} **{test['source_name']}** → **{test['target_name']}** "
-            f"— {test['result']}  `({test['timestamp']})`"
+if conn_tests:
+    conn_table = []
+    for ct in conn_tests:
+        conn_table.append(
+            {
+                "Sensor": ct["sensor_name"],
+                "Gateway": ct["gateway_name"],
+                "Endpoint": ct["endpoint_name"],
+                "Status": ct["status"],
+                "Test Date": ct["test_date"],
+            }
         )
+
+    conn_df = pd.DataFrame(conn_table)
+
+    # Color-code the status column
+    STATUS_COLORS = {
+        "FMC": "#50C878",      # Green  — Full Mission Capable
+        "PMC": "#F5A623",      # Orange — Partially Mission Capable
+        "NMC": "#E74C3C",      # Red    — Not Mission Capable
+        "Untested": "#999999", # Grey
+    }
+
+    def highlight_conn_status(val):
+        color = STATUS_COLORS.get(val, "#999999")
+        return f"color: {color}; font-weight: bold"
+
+    st.dataframe(
+        conn_df.style.map(highlight_conn_status, subset=["Status"]),
+        use_container_width=True,
+        hide_index=True,
+    )
 else:
-    st.info("No test results yet. Use the sidebar to run a connection test.")
+    st.info(
+        "No connection status records yet. "
+        "Use the sidebar to record a connection status."
+    )
+
+st.markdown("---")
 
 
 # ---------------------------------------------------------------------------
