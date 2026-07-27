@@ -3,6 +3,7 @@ Network Connectivity & Pathway Management Dashboard
 Main Streamlit entry point.
 """
 
+import pandas as pd
 import streamlit as st
 from database import (
     initialize_database,
@@ -62,6 +63,10 @@ st.markdown("---")
 
 st.sidebar.header("⚙️ Network Controls")
 
+# Fetch node names once, outside any form, so all forms can safely use it
+all_nodes = get_all_nodes()
+node_names = [n["name"] for n in all_nodes]
+
 # ---- Add Node Form ----
 with st.sidebar.form("add_node_form", clear_on_submit=True):
     st.subheader("➕ Add Node")
@@ -74,19 +79,30 @@ with st.sidebar.form("add_node_form", clear_on_submit=True):
 
     if submit_node:
         if not node_name.strip():
-            st.error("Node name cannot be empty.")
+            st.session_state.node_msg = ("error", "Node name cannot be empty.")
         else:
             success = add_node(node_name.strip(), node_type)
             if success:
-                st.success(f"Node '{node_name}' added successfully!")
+                st.session_state.node_msg = (
+                    "success", f"Node '{node_name}' added successfully!"
+                )
             else:
-                st.error(f"A node named '{node_name}' already exists.")
+                st.session_state.node_msg = (
+                    "error", f"A node named '{node_name}' already exists."
+                )
+
+# Display add-node feedback outside the form so it persists
+if "node_msg" in st.session_state:
+    msg_type, msg_text = st.session_state.node_msg
+    if msg_type == "success":
+        st.sidebar.success(msg_text)
+    else:
+        st.sidebar.error(msg_text)
+    del st.session_state.node_msg
 
 # ---- Add Pathway Form ----
 with st.sidebar.form("add_pathway_form", clear_on_submit=True):
     st.subheader("🔗 Add Pathway")
-    all_nodes = get_all_nodes()
-    node_names = [n["name"] for n in all_nodes]
 
     col1, col2 = st.columns(2)
     with col1:
@@ -98,15 +114,30 @@ with st.sidebar.form("add_pathway_form", clear_on_submit=True):
 
     if submit_pathway:
         if src_node == tgt_node:
-            st.error("Source and target must be different nodes.")
+            st.session_state.edge_msg = (
+                "error", "Source and target must be different nodes."
+            )
         else:
             success = add_edge(src_node, tgt_node)
             if success:
-                st.success(f"Pathway from '{src_node}' to '{tgt_node}' added!")
-            else:
-                st.error(
-                    "Pathway already exists or one of the nodes was not found."
+                st.session_state.edge_msg = (
+                    "success",
+                    f"Pathway from '{src_node}' to '{tgt_node}' added!",
                 )
+            else:
+                st.session_state.edge_msg = (
+                    "error",
+                    "Pathway already exists or one of the nodes was not found.",
+                )
+
+# Display add-pathway feedback outside the form so it persists
+if "edge_msg" in st.session_state:
+    msg_type, msg_text = st.session_state.edge_msg
+    if msg_type == "success":
+        st.sidebar.success(msg_text)
+    else:
+        st.sidebar.error(msg_text)
+    del st.session_state.edge_msg
 
 # ---- Run Test Form ----
 with st.sidebar.form("run_test_form", clear_on_submit=True):
@@ -122,7 +153,10 @@ with st.sidebar.form("run_test_form", clear_on_submit=True):
 
     if submit_test:
         if test_src == test_tgt:
-            st.error("Source and target must be different nodes.")
+            st.session_state.test_msg = (
+                "error",
+                f"Source and target must be different nodes.",
+            )
         else:
             # Build the current graph state
             nodes = get_all_nodes()
@@ -143,7 +177,7 @@ with st.sidebar.form("run_test_form", clear_on_submit=True):
                     f"**Path:** `{path_str}`\n\n"
                     f"Edges along the path are now marked **Active**."
                 )
-                st.success(message)
+                st.session_state.test_msg = ("success", message)
                 record_test_result(
                     test_src, test_tgt, f"Success: {path_str}"
                 )
@@ -153,8 +187,17 @@ with st.sidebar.form("run_test_form", clear_on_submit=True):
                     f"❌ No connection found between "
                     f"'{test_src}' and '{test_tgt}'."
                 )
-                st.error(message)
+                st.session_state.test_msg = ("error", message)
                 record_test_result(test_src, test_tgt, "No connection found")
+
+# Display test feedback outside the form so it persists
+if "test_msg" in st.session_state:
+    msg_type, msg_text = st.session_state.test_msg
+    if msg_type == "success":
+        st.sidebar.success(msg_text)
+    else:
+        st.sidebar.error(msg_text)
+    del st.session_state.test_msg
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +276,6 @@ if edges:
             }
         )
 
-    import pandas as pd
-
     df = pd.DataFrame(table_data)
 
     # Apply color-based styling for the status column
@@ -246,7 +287,7 @@ if edges:
         return ""
 
     st.dataframe(
-        df.style.applymap(highlight_status, subset=["Status"]),
+        df.style.map(highlight_status, subset=["Status"]),
         use_container_width=True,
         hide_index=True,
     )
